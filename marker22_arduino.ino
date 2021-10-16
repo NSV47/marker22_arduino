@@ -67,6 +67,20 @@
 
 #include <SoftwareSerial.h>
 
+#include <Wire.h>
+//----polulu-------------------
+#include <VL53L0X.h>
+
+VL53L0X sensor;
+//-----------------------------
+
+/*
+//----adafruit-----------------------------
+#include "Adafruit_VL53L0X.h"
+
+Adafruit_VL53L0X sensor = Adafruit_VL53L0X();
+//-----------------------------------------
+*/
 bool state_LED_BUILTIN = LOW;
 const byte port_stepOut = 6;
 const byte port_direction = 7;
@@ -86,6 +100,10 @@ bool state_power = false; //на 96 стр есть похожая переме�
 
 bool state_port_stepOut = LOW;
 
+//bool flag_departure_to_limit_up = false; // для определения выезда на концевик и установки 
+// маркирующего узла в точку фокуса. После этого буду инициализировать VL53L0X
+//bool flag_sensorInit = false; // для того, чтобы выполнить sensorInit один раз.
+
 SoftwareSerial softSerial(pinRX,pinTX); 
 
 int T = 625; // чем меньше, тем выше частота вращения
@@ -98,12 +116,14 @@ float distance = 1;
 double theDifferenceIsActual = 0; //переменная для количества миллиметров до фокуса на столе фактическая
 
 //--------------------------------------------------------------------------------
-bool state_pow_on = false; //чтобы отследить первую из двух команд от дисплея. 
+bool access_to_limit_up = false; //чтобы отследить первую из двух команд от дисплея. 
 //Глобальная, потому что заходим в функцию два раза из-за особенностей softSerial
 //на 81 стр есть похожая переменная, может можно объединить???
 //скорее всего нет, потому что эта переменная для того чтобы нельзя было включить 
 //лазер без общего питания???
 //--------------------------------------------------------------------------------
+
+//int min_value_VX53L0X = 32760;
 
 void impulse(int& T, long& pulses){
   pulses*=2;
@@ -221,10 +241,25 @@ void controlUart(){                          // Эта функция позво
       action(100, mySpeed, acceleration);
     }else if(cmd.equals("sensorInit")){
       Serial.println("debugging information");
+      sensorInit();
     }else if(cmd.equals("sensorRead")){     
-      Serial.print("debugging information");
+      Serial.println("debugging information");
+      
+      Serial.print(sensor.readRangeSingleMillimeters());
+      if (sensor.timeoutOccurred()) { Serial.print(" TIMEOUT"); }
+      Serial.println();
+      
     }else if(cmd.equals("autoFocus")){     
       Serial.println("this feature is in development");
+      if ((int)sensor.readRangeSingleMillimeters()-225>0){
+        digitalWrite(port_direction, HIGH);
+        theDifferenceIsActual += (int)sensor.readRangeSingleMillimeters()-225;
+      }else{
+        digitalWrite(port_direction, LOW);
+        theDifferenceIsActual -= (int)sensor.readRangeSingleMillimeters()-225;
+      }
+      action(abs((int)sensor.readRangeSingleMillimeters()-225), mySpeed, acceleration);
+      //Serial.println(abs((int)sensor.readRangeSingleMillimeters()-225));
     }else{
       Serial.println("error");    // ошибка
     }
@@ -242,12 +277,16 @@ void movingToZero(double count){             // Эта функция перем
 
 void focusOnTheTable(){                      // Эта функция при первом включении уводит систему на верхний концевик, а потом перемещает систему в положение нуля и обнуляет положение
    Serial.println("focus on the table!");   
-   if(!state_pow_on){
+   if(!access_to_limit_up){
+     access_to_limit_up = true;
      digitalWrite(port_direction, LOW);
      action(500, mySpeed, acceleration);
      digitalWrite(port_direction, HIGH);
      action(142, mySpeed, acceleration);
      theDifferenceIsActual = 0;
+     Serial.println("Система в точке фокуса");
+     //flag_departure_to_limit_up = true;
+     access_to_limit_up = true;
    }else{
       movingToZero(theDifferenceIsActual);
       theDifferenceIsActual = 0;
@@ -287,8 +326,6 @@ void settingTheDisplayButtonStates(){        // Эта функция устан
   softSerial.print((String) "print bt1.val"+char(255)+char(255)+char(255));
   while(!softSerial.available()){}
   digitalWrite(port_las, softSerial.read());         
-  state_LED_BUILTIN = !state_LED_BUILTIN;
-  digitalWrite(LED_BUILTIN, state_LED_BUILTIN);
   delay(10);
   while(softSerial.available()){
     softSerial.read();
@@ -297,14 +334,13 @@ void settingTheDisplayButtonStates(){        // Эта функция устан
   //-----------------------------------------------------------------------
   softSerial.print((String) "print bt2.val"+char(255)+char(255)+char(255));
   while(!softSerial.available()){}
-  digitalWrite(port_light, softSerial.read());         
-  state_LED_BUILTIN = !state_LED_BUILTIN;
-  digitalWrite(LED_BUILTIN, state_LED_BUILTIN);
+  digitalWrite(port_light, softSerial.read());          
   delay(10);
   while(softSerial.available()){
     softSerial.read();
     delay(10);
   }
+  Serial.println("settingTheDisplayButtonStates has been completed");
 }
 
 void controlFromTheDisplay(){
@@ -336,15 +372,11 @@ void controlFromTheDisplay(){
       if(memcmp(&str[i],"light_ON", 8)==0){
         i+=7; 
         digitalWrite(port_light, HIGH);
-        state_LED_BUILTIN = true;
-        digitalWrite(LED_BUILTIN, state_LED_BUILTIN);
       }else 
       //----------------------------------------------
       if(memcmp(&str[i],"light_OFF", 9)==0){
         i+=8; 
         digitalWrite(port_light, LOW);
-        state_LED_BUILTIN = false;
-        digitalWrite(LED_BUILTIN, state_LED_BUILTIN);
       }else 
       //----------------------------------------------
       if(memcmp(&str[i],"pow_OFF", 7)==0){
@@ -369,10 +401,9 @@ void controlFromTheDisplay(){
         digitalWrite(port_las, softSerial.read());       delay(10);               // Устанавливаем на выходе port_las состояние в соответствии с первым принятым байтом ответа дисплея
         while(softSerial.available()){softSerial.read(); delay(10);}
         //------------------------------------------------------------------------------------------------------------------
-        //delay(500);          // удалить ели все работает
-        if(!state_pow_on){     // при первом включении отправить систему на верхний концевик
+        if(!access_to_limit_up){     // при первом включении отправить систему на верхний концевик
           focusOnTheTable();
-          state_pow_on = true;
+          access_to_limit_up = true;
         }
       }else 
       //----------------------------------------------
@@ -427,12 +458,41 @@ void controlFromTheDisplay(){
   }
 }
 
+void sensorInit(){
+  
+  //----polulu--------------------------------------------------
+  sensor.setTimeout(500);
+  if (!sensor.init())
+  {
+    Serial.println("Failed to detect and initialize sensor!");
+    while (1) {}
+  }
+
+  sensor.setMeasurementTimingBudget(200000);
+  Serial.println("sensorInit has been completed");
+  //-----------------------------------------------------------
+  
+  /*
+  //----adafruit-----------------------------------------------
+  Serial.println("Adafruit VL53L0X test");
+  if (!sensor.begin()) {
+    Serial.println(F("Failed to boot VL53L0X"));
+    while(1);
+  }
+  // power 
+  Serial.println(F("VL53L0X API Simple Ranging example\n\n")); 
+  //-----------------------------------------------------------
+  */
+}
+
 void setup() {
  
   Serial.begin(9600);
   
   softSerial.begin(9600);
 
+  Wire.begin();
+  
   pinMode(port_stepOut, OUTPUT);  
   pinMode(LED_BUILTIN, OUTPUT);
   pinMode(port_direction, OUTPUT);
@@ -442,17 +502,25 @@ void setup() {
   pinMode(port_EN_ROT_DEV, OUTPUT);
   pinMode(port_limit_up, INPUT_PULLUP);
 
+  digitalWrite(port_light, HIGH);
+
   terminal();
   //-----------------------------------------------------------------------
   settingTheDisplayButtonStates();
   //-----------------------------------------------------------------------
   Serial.println("Ready!");
+  sensorInit();
 }
 
 void loop() {
-
-  controlFromTheDisplay();
+    if(millis()%500<=5){
+      delay(5);
+      
+      //Serial.println(min_value_VX53L0X);
+    } 
+      
+    controlFromTheDisplay();
   
-  controlUart();
+    controlUart();
   
 }
