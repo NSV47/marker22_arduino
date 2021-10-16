@@ -249,15 +249,31 @@ void controlUart(){                          // Эта функция позво
       if (sensor.timeoutOccurred()) { Serial.print(" TIMEOUT"); }
       Serial.println();
       
+    /* 
+	* 16.10.21
+	* в данной функции есть необходимость считать на сколько миллиметров маркировочный узел уехал от точки фокуса, потому что датчик пока не дает
+	* точных показаний. Функция сделана по аналогии с движением вверх/вниз, но система не уходит в положения фокуса после попыток автофокусировки.
+	* Есть придположение, что это из-за ситуации, когда "показания_датчика - 225" отрицательное. Нет возможности проверить, программирую из дома.
+	* Удалить если после проверки все работает.
+	*
+	* При отладке "вручную" я пришел к тому, что при ситуации, когда показания_датчика-225 меньше нуля (например -25), при этом функция автофокусировки
+	* увела маркировочный узел на 25 мм вверх и вызове функции выхода в положение фокуса на 
+	* рабочий стол переменная theDifferenceIsActual принимает значение "не в ту сторону" (становится равной 25). То есть место того чтобы вычитать 
+	* из значения theDifferenceIsActual произойдет прибавление (минус на минус дает плюс) и функция movingToZero уведет систему вверх еще на 25 мм.
+	*
+	* При отладке "вручную" в случае положения над фокусом ошибки не произошло. НО необходимо все проверить! Нужно попробовать автофокусировать
+	* систему из положения надо фокусом и, на всякий случай смотреть что выдает датчик, чтобы не проскочило отричательное значение. Версия этой функции с 
+	* ошибкой есть в коммите от 16.10.21 на GitHub (самом первом после переноса с локального репозитория).
+	*/
     }else if(cmd.equals("autoFocus")){     
       Serial.println("this feature is in development");
       if ((int)sensor.readRangeSingleMillimeters()-225>0){
         digitalWrite(port_direction, HIGH);
-        theDifferenceIsActual += (int)sensor.readRangeSingleMillimeters()-225;
       }else{
         digitalWrite(port_direction, LOW);
-        theDifferenceIsActual -= (int)sensor.readRangeSingleMillimeters()-225;
       }
+	  theDifferenceIsActual += (int)sensor.readRangeSingleMillimeters()-225; // Проверить! вычитание не требуется, потому что при отрицательном значении
+	  // (int)sensor.readRangeSingleMillimeters()-225 плюс на минус даст минус
       action(abs((int)sensor.readRangeSingleMillimeters()-225), mySpeed, acceleration);
       //Serial.println(abs((int)sensor.readRangeSingleMillimeters()-225));
     }else{
