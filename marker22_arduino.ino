@@ -77,6 +77,7 @@ const uint8_t port_las = 9;
 const uint8_t port_light = 10;
 const uint8_t port_EN_ROT_DEV = 11;
 const uint8_t port_limit_up = 12;
+const uint8_t port_limit_down = 15;
 
 bool old_state_limit_up = LOW;
 unsigned long timer_limit_up = 0;
@@ -109,21 +110,24 @@ void impulse(int& T, long& pulses){
   pulses*=2;
   while(pulses){
     bool state_port_limit_up = digitalRead(port_limit_up);
+	bool state_port_limit_down = digitalRead(port_limit_down);
     if(micros() - timer_impulse >= T){
       state_port_stepOut = !state_port_stepOut;
       digitalWrite(port_stepOut, state_port_stepOut);
       timer_impulse = micros();
       pulses--;
     }
-    if(state_port_limit_up){
+    if(state_port_limit_up || state_port_limit_down){
       pulses = 0;
     }
     
   }
 }
 
+/*
 void rotation(long pulses, int T){
     bool state_port_limit_up = digitalRead(port_limit_up);
+	bool state_port_limit_down = digitalRead(port_limit_down);
     bool state_port_direction = digitalRead(port_direction);
     if(state_port_limit_up){
       if(!state_port_direction){
@@ -138,6 +142,49 @@ void rotation(long pulses, int T){
       impulse(T, pulses);
       state_port_limit_up = digitalRead(port_limit_up);
     }
+}
+*/
+
+void rotation(long pulses, int T){
+    bool state_port_limit_up = digitalRead(port_limit_up);
+    bool state_port_limit_down = digitalRead(port_limit_down);
+    bool state_port_direction = digitalRead(port_direction);
+    if(state_port_limit_up){
+      if(!state_port_direction){
+        if(millis()%500<=5){delay(5); 
+          Serial.println("limit UP!");
+        }
+      }else{
+        impulse(T, pulses);
+        state_port_limit_up = digitalRead(port_limit_up); //удалить если все работает
+      }
+    }else 
+      if(state_port_limit_down){
+        if(state_port_direction){
+          if(millis()%500<=5){
+            delay(5); 
+            Serial.println("limit DOWN!");
+          }
+        }else{
+          impulse(T, pulses);
+        }
+      }
+    else{
+      impulse(T, pulses);
+      state_port_limit_up = digitalRead(port_limit_up); //удалить если все работает
+    }
+    /*
+    if(state_port_limit_down){
+      if(state_port_direction){
+        if(millis()%500<=5){delay(5); 
+          Serial.println("limit DOWN!");
+        }
+      }else{
+        impulse(T, pulses);
+      }
+    }//else{
+      //impulse(T, pulses);
+    //}*/
 }
 
 void acceleration_function(int initialFreqiency, int finalFrequency){
